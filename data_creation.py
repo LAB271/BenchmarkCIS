@@ -2,10 +2,7 @@ import re
 import pandas as pd
 from ollama import chat
 import json
-# LOAD DATA
-df = pd.read_json("hf://datasets/databricks/databricks-dolly-15k/databricks-dolly-15k.jsonl", lines=True)
-filtered_df = df[df['category'] == 'open_qa']
-df_open_qa = filtered_df.head(10)
+from openai import OpenAI
 
 # Generate answers from LLM
 # TODO: would be nice to have another function to populate the questions with a larger amount of questions. The same questions but phrased differently to see how consistent these models are.
@@ -32,8 +29,6 @@ def create_variants(model:str, n:int):
     with open(f'./data/questions/{model}_variants.json', 'w') as f:
         json.dump(variants, f)
 
-# create_variants(model='phi4', n=10)
-
 def generate_response(model:str, data:list):
     dataset = []
 
@@ -41,16 +36,15 @@ def generate_response(model:str, data:list):
         cleaned_questions_block = re.sub(r'q_\d+:\s*', '', dict['response'])
 
         # Split the cleaned string into separate questions
-        # TODO: Issue still exists that there might be some generation where only one \n is made instead of two, need to either fix the prompt or experiment to figure out how to deal with this
-        # Could also have been some weird issues with vs code
         question_list = cleaned_questions_block.split("\n")
         # This will allow me to group the different type of questions with their variants
         question_grouped = []
 
         for question in question_list:
+            # Sometimes generation fails to have two `\n\n` so we have empty strings
             if question == '':
                 continue
-                   
+
             message = [{
                     "role": "user",
                     "content": question
@@ -66,7 +60,34 @@ def generate_response(model:str, data:list):
     with open(f'./data/{model}_data.json', 'w') as f:
         json.dump(dataset, f)
 
+# TODO: make this main function or some
+model = "gpt-4o"
+if model.startswith('gpt'):
+    client = OpenAI()
+else:
+    client = OpenAI(
+        base_url = 'http://localhost:11434/v1',
+        api_key='ollama', # required, but unused
+    )
+# LOAD DATA
+completion = client.chat.completions.create(
+    model="gpt-4o-mini",
+    messages=[
+        {"role": "system", "content": "You are a helpful assistant."},
+        {
+            "role": "user",
+            "content": "Write a haiku about recursion in programming."
+        }
+    ]
+)
 
-with open("./data/questions/phi4_variants.json", 'r', encoding='utf-8') as file:
+print(completion.choices[0].message)
+
+df = pd.read_json("hf://datasets/databricks/databricks-dolly-15k/databricks-dolly-15k.jsonl", lines=True)
+filtered_df = df[df['category'] == 'open_qa']
+df_open_qa = filtered_df.head(10)
+
+# create_variants(model=model, n=10)
+with open(f"./data/questions/{model}_variants.json", 'r', encoding='utf-8') as file:
     json_data = json.load(file)
-generate_response("phi4", json_data)
+generate_response(model, json_data)
