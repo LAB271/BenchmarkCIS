@@ -6,6 +6,7 @@ from langchain_openai import OpenAIEmbeddings
 from llama_index.embeddings.openai import OpenAIEmbedding
 import asyncio
 import json
+from colorama import Fore, Style
 
 # TODO: Turn this into a RAGAs metric
 
@@ -41,23 +42,27 @@ def create_permutations(question_group):
         permutations.extend(permutation)
     return permutations
 
-model = 'gpt-4o'
-eval_embeddings = LangchainEmbeddingsWrapper(OpenAIEmbeddings())
-# eval_embeddings = LlamaIndexEmbeddingsWrapper(OpenAIEmbedding())
-# TODO: Try to get the hugging face embedding models working
-# eval_embeddings = HuggingfaceEmbeddings(model_name='bert-based-uncased') 
-with open(f"./data/output/{model}_data.json", 'r', encoding='utf-8') as file:
-        json_data = json.load(file)
+models = ["qwen2.5:0.5b", "qwen2.5:1.5b", "qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b", "gpt-4o"]
+# TODO: Add the support for the different dataset types (variants/duplicates)
+for model in models:
+    eval_embeddings = LangchainEmbeddingsWrapper(OpenAIEmbeddings())
+    # eval_embeddings = LlamaIndexEmbeddingsWrapper(OpenAIEmbedding())
+    # TODO: Try to get the hugging face embedding models working
+    # eval_embeddings = HuggingfaceEmbeddings(model_name='bert-based-uncased') 
+    with open(f"./data/output/{model}_data.json", 'r', encoding='utf-8') as file:
+            json_data = json.load(file)
 
-scorers_metrics = [
-    (NonLLMStringSimilarity(), "Non-LLM String Similarity"),
-    (BleuScore(), "BlueScore"),
-    (RougeScore(rouge_type='rougeL'), "Rouge Score"),
-    (SemanticSimilarity(embeddings=eval_embeddings), "LLM Semantic Similarity")
-]
-
-for scorer, metric in scorers_metrics:
-    asyncio.run(string_similarity(json_data, scorer, metric))    
+    scorers_metrics = [
+        (NonLLMStringSimilarity(), "Non-LLM String Similarity"),
+        (BleuScore(), "BlueScore"),
+        (RougeScore(rouge_type='rougeL'), "Rouge Score"),
+        (SemanticSimilarity(embeddings=eval_embeddings), "LLM Semantic Similarity")
+    ]
+    
+    for scorer, metric in scorers_metrics:
+        print(f"Now checking string and semantic similarity of {Fore.RED} {model}:")
+        # asyncio.run(string_similarity(json_data, scorer, metric))
+        print(Style.RESET_ALL)    
 
 
 

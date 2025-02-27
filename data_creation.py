@@ -78,7 +78,7 @@ def generate_response(output_model:str, path:str, q_type:str):
 
 # TODO: make this main function or some
 api_key = os.getenv("OPENAI_API_KEY")
-models = ["qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b", "gpt-4o"]
+models = ["qwen2.5:0.5b", "qwen2.5:1.5b", "qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b", "gpt-4o"]
 input_model = 'gpt-4o'
 q_type = 'variants'
 
