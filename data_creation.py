@@ -6,6 +6,18 @@ from dotenv import load_dotenv
 load_dotenv()
 import os
 
+def create_duplicates(df: pd.DataFrame, n:int):
+    duplicates = []
+    for _, row in df.iterrows():
+        text = 'q_0:' + row['instruction'] + "\n\n"
+        for i in range(1, n):
+            text += f"q_{i}:" + row['instruction'] + "\n\n"
+        text += f"q_{n}:" + row['instruction']
+        duplicates.append({'response':text})
+    
+    with open(f'./data/questions/duplicates.json', 'w') as f:
+        json.dump(duplicates, f)
+
 # Generate answers from LLM
 # TODO: would be nice to have another function to populate the questions with a larger amount of questions. The same questions but phrased differently to see how consistent these models are.
 # Would also be nice to choose either openai or ollama
@@ -31,9 +43,9 @@ def create_variants(n:int, df: pd.DataFrame, input_model:str = 'gpt-4o'):
     with open(f'./data/questions/{input_model}_variants.json', 'w') as f:
         json.dump(variants, f)
 
-def generate_response(output_model:str, input_model:str = 'gpt-4o'):
+def generate_response(output_model:str, path:str, q_type:str):
     dataset = []
-    with open(f"./data/questions/{input_model}_variants.json", 'r', encoding='utf-8') as file:
+    with open(path, 'r', encoding='utf-8') as file:
         data = json.load(file)
 
     for dict in data:
@@ -61,19 +73,23 @@ def generate_response(output_model:str, input_model:str = 'gpt-4o'):
             })
         dataset.append(question_grouped)
 
-    with open(f'./data/output/{output_model}_data.json', 'w') as f:
+    with open(f'./data/output/{output_model}_data_{q_type}.json', 'w') as f:
         json.dump(dataset, f)
 
 # TODO: make this main function or some
 api_key = os.getenv("OPENAI_API_KEY")
 models = ["qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b", "gpt-4o"]
+input_model = 'gpt-4o'
+q_type = 'variants'
 
 # LOAD DATA
 df = pd.read_json("hf://datasets/databricks/databricks-dolly-15k/databricks-dolly-15k.jsonl", lines=True)
 filtered_df = df[df['category'] == 'open_qa']
 df_open_qa = filtered_df.head(10)
 
+# CREATING QUESTIONS
 # create_variants(df=df_open_qa, n=10)
+create_duplicates(df=df_open_qa, n=10)
 
 for model in models:
     if model.startswith('gpt'):
@@ -84,4 +100,7 @@ for model in models:
             api_key='ollama', # required, but unused
         )
 
-    generate_response(output_model=model)
+    path = f"./data/questions/{input_model}_{q_type}.json"
+    if q_type == 'duplicates':
+        path = "./data/questions/duplicates.json"
+    generate_response(output_model=model, path=path)
