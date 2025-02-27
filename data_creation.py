@@ -9,9 +9,9 @@ import os
 # Generate answers from LLM
 # TODO: would be nice to have another function to populate the questions with a larger amount of questions. The same questions but phrased differently to see how consistent these models are.
 # Would also be nice to choose either openai or ollama
-def create_variants(model:str, n:int):
+def create_variants(n:int, df: pd.DataFrame, input_model:str = 'gpt-4o'):
     variants = []
-    for _, row in df_open_qa.iterrows():
+    for _, row in df.iterrows():
         messages = [
             {
                 "role": "system",
@@ -22,17 +22,19 @@ def create_variants(model:str, n:int):
                 "content": row['instruction']
             }
         ]
-
-        output = client.chat.completions.create(model=model, messages=messages)
+        client = OpenAI(api_key=api_key)
+        output = client.chat.completions.create(model=input_model, messages=messages)
         variants.append({
             "response":"q_0:"+row['instruction']+"\n\n"+output.choices[0].message.content,
         })
     
-    with open(f'./data/questions/{model}_variants.json', 'w') as f:
+    with open(f'./data/questions/{input_model}_variants.json', 'w') as f:
         json.dump(variants, f)
 
-def generate_response(model:str, data:list):
+def generate_response(output_model:str, input_model:str = 'gpt-4o'):
     dataset = []
+    with open(f"./data/questions/{input_model}_variants.json", 'r', encoding='utf-8') as file:
+        data = json.load(file)
 
     for dict in data:
         cleaned_questions_block = re.sub(r'q_\d+:\s*', '', dict['response'])
@@ -52,33 +54,34 @@ def generate_response(model:str, data:list):
                     "content": question
                 }]
                 
-            output = client.chat.completions.create(model=model, messages=message)
+            output = client.chat.completions.create(model=output_model, messages=message)
             question_grouped.append({
                 "user_input": question,
                 "response":output.choices[0].message.content,
             })
         dataset.append(question_grouped)
 
-    with open(f'./data/output/{model}_data.json', 'w') as f:
+    with open(f'./data/output/{output_model}_data.json', 'w') as f:
         json.dump(dataset, f)
 
 # TODO: make this main function or some
 api_key = os.getenv("OPENAI_API_KEY")
-model = "gpt-4o"
-if model.startswith('gpt'):
-    client = OpenAI(api_key=api_key)
-else:
-    client = OpenAI(
-        base_url = 'http://localhost:11434/v1',
-        api_key='ollama', # required, but unused
-    )
+models = ["qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b", "gpt-4o"]
 
 # LOAD DATA
 df = pd.read_json("hf://datasets/databricks/databricks-dolly-15k/databricks-dolly-15k.jsonl", lines=True)
 filtered_df = df[df['category'] == 'open_qa']
 df_open_qa = filtered_df.head(10)
 
-# create_variants(model=model, n=10)
-with open(f"./data/questions/{model}_variants.json", 'r', encoding='utf-8') as file:
-    json_data = json.load(file)
-generate_response(model, json_data)
+# create_variants(df=df_open_qa, n=10)
+
+for model in models:
+    if model.startswith('gpt'):
+        client = OpenAI(api_key=api_key)
+    else:
+        client = OpenAI(
+            base_url = 'http://localhost:11434/v1',
+            api_key='ollama', # required, but unused
+        )
+
+    generate_response(output_model=model)
