@@ -1,19 +1,20 @@
 from ragas import SingleTurnSample
-from ragas.metrics import NonLLMStringSimilarity
+from ragas.metrics import NonLLMStringSimilarity, SemanticSimilarity, BleuScore, RougeScore
+from ragas import evaluate
+from ragas.embeddings import LangchainEmbeddingsWrapper, LlamaIndexEmbeddingsWrapper, HuggingfaceEmbeddings
+from langchain_openai import OpenAIEmbeddings
+from llama_index.embeddings.openai import OpenAIEmbedding
 import asyncio
 import json
 
 # TODO: Turn this into a RAGAs metric
 
-async def non_llm_string_similarity(model: str):
-    scorer = NonLLMStringSimilarity()
+async def string_similarity(data, scorer, metric):
     avg_model_score = 0
     sum_average_question_group = 0
-    with open(f"./data/output/{model}_data.json", 'r', encoding='utf-8') as file:
-        json_data = json.load(file)
 
     # Creates permutations (n choose 2) to compare string similarity between all style of outputs.  
-    for question_group in json_data:
+    for question_group in data:
         permutations = create_permutations(question_group)
 
         sum_score = 0    
@@ -23,9 +24,8 @@ async def non_llm_string_similarity(model: str):
         average_score_question_group = (sum_score / len(permutations))
         sum_average_question_group += average_score_question_group
         
-    avg_model_score = (sum_average_question_group / len(json_data))
-    print(f"The final Average Similarity Score for the Model: {avg_model_score}")
-
+    avg_model_score = (sum_average_question_group / len(data))
+    print(f"The final Average {metric} for the Model: {avg_model_score}")
 
 def create_permutations(question_group):
     permutations = []
@@ -40,10 +40,24 @@ def create_permutations(question_group):
             )
         permutations.extend(permutation)
     return permutations
-        
-asyncio.run(non_llm_string_similarity('phi4'))
 
-    
+model = 'gpt-4o'
+eval_embeddings = LangchainEmbeddingsWrapper(OpenAIEmbeddings())
+# eval_embeddings = LlamaIndexEmbeddingsWrapper(OpenAIEmbedding())
+# TODO: Try to get the hugging face embedding models working
+# eval_embeddings = HuggingfaceEmbeddings(model_name='bert-based-uncased') 
+with open(f"./data/output/{model}_data.json", 'r', encoding='utf-8') as file:
+        json_data = json.load(file)
+
+scorers_metrics = [
+    (NonLLMStringSimilarity(), "Non-LLM String Similarity"),
+    (BleuScore(), "BlueScore"),
+    (RougeScore(rouge_type='rougeL'), "Rouge Score"),
+    (SemanticSimilarity(embeddings=eval_embeddings), "LLM Semantic Similarity")
+]
+
+for scorer, metric in scorers_metrics:
+    asyncio.run(string_similarity(json_data, scorer, metric))    
 
 
 
