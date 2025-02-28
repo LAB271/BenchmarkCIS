@@ -26,7 +26,7 @@ async def string_similarity(data, scorer, metric):
         sum_average_question_group += average_score_question_group
         
     avg_model_score = (sum_average_question_group / len(data))
-    print(f"The final Average {metric} for the Model: {avg_model_score}")
+    print(f"{Style.RESET_ALL} The final Average {metric} for the Model: {avg_model_score}")
 
 def create_permutations(question_group):
     permutations = []
@@ -59,11 +59,10 @@ for model in models:
         (SemanticSimilarity(embeddings=eval_embeddings), "LLM Semantic Similarity")
     ]
     
+    print(f"Now checking string and semantic similarity of {Fore.RED} {model}:")
     for scorer, metric in scorers_metrics:
-        print(f"Now checking string and semantic similarity of {Fore.RED} {model}:")
-        # asyncio.run(string_similarity(json_data, scorer, metric))
-        print(Style.RESET_ALL)    
-
+        asyncio.run(string_similarity(json_data, scorer, metric))
+    print()    
 
 
 
