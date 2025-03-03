@@ -27,6 +27,7 @@ async def string_similarity(data, scorer, metric):
         
     avg_model_score = (sum_average_question_group / len(data))
     print(f"{Style.RESET_ALL} The final Average {metric} for the Model: {avg_model_score}")
+    return avg_model_score
 
 def create_permutations(question_group):
     permutations = []
@@ -43,6 +44,7 @@ def create_permutations(question_group):
     return permutations
 
 models = ["qwen2.5:0.5b", "qwen2.5:1.5b", "qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b", "gpt-4o"]
+result = []
 # TODO: Add the support for the different dataset types (variants/duplicates)
 for model in models:
     eval_embeddings = LangchainEmbeddingsWrapper(OpenAIEmbeddings())
@@ -61,8 +63,9 @@ for model in models:
     
     print(f"Now checking string and semantic similarity of {Fore.RED} {model}:")
     for scorer, metric in scorers_metrics:
-        asyncio.run(string_similarity(json_data, scorer, metric))
-    print()    
+        avg_score = asyncio.run(string_similarity(json_data, scorer, metric))
+        result.append({'model':model, 'avg_score': avg_score, 'metric':metric})
+    print()
 
-
-
+with open(f'./data/results/similarity.json', 'w') as f:
+        json.dump(result, f)

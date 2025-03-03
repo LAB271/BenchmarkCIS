@@ -1,1 +1,4 @@
 .env
+experiment.py
+data/output/experiment_data.json
+data/results/experiment.txt
