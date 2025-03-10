@@ -88,51 +88,52 @@ def create_permutations(question_group, pre_processing):
 models = ["qwen2.5:0.5b", "qwen2.5:1.5b", "qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b", "gpt-4o"]
 # models = ["experiment"]
 result = []
-transpose = True
-pre_processing = True
+temp = [(False, False), (False, True), (True, False), (True, True)]
+for transpose, pre_processing in temp:
+    embedding_model = 'text-embedding-3-large'
 
-if pre_processing:
-    nltk.download('stopwords')
-    nltk.download('wordnet')
-    nltk.download('omw-1.4')
-    nltk.download('averaged_perceptron_tagger_eng')
-    wnl = WordNetLemmatizer()
-    stop_words = set(stopwords.words('english'))
+    if pre_processing:
+        nltk.download('stopwords')
+        nltk.download('wordnet')
+        nltk.download('omw-1.4')
+        nltk.download('averaged_perceptron_tagger_eng')
+        wnl = WordNetLemmatizer()
+        stop_words = set(stopwords.words('english'))
 
-# TODO: Add the support for the different dataset types (variants/duplicates)
-for model in models:
-    eval_embeddings = LangchainEmbeddingsWrapper(OpenAIEmbeddings())
-    # eval_embeddings = LlamaIndexEmbeddingsWrapper(OpenAIEmbedding())
-    # TODO: Try to get the hugging face embedding models working
-    # eval_embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
-    with open(f"./data/output/{model}_data.json", 'r', encoding='utf-8') as file:
-        json_data = json.load(file)
+    # TODO: Add the support for the different dataset types (variants/duplicates)
+    for model in models:
+        eval_embeddings = LangchainEmbeddingsWrapper(OpenAIEmbeddings(model=embedding_model))
+        # eval_embeddings = LlamaIndexEmbeddingsWrapper(OpenAIEmbedding())
+        # TODO: Try to get the hugging face embedding models working
+        # eval_embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
+        with open(f"./data/output/{model}_data.json", 'r', encoding='utf-8') as file:
+            json_data = json.load(file)
 
-    # Assumes square matrix
-    transposed_data = []
-    if transpose:
-        rows = len(json_data)
-        cols = len(json_data[0])
-        transposed_data = [[json_data[j][i] for j in range(rows)] for i in range(cols)]
-        json_data = transposed_data
+        # Assumes square matrix
+        transposed_data = []
+        if transpose:
+            rows = len(json_data)
+            cols = len(json_data[0])
+            transposed_data = [[json_data[j][i] for j in range(rows)] for i in range(cols)]
+            json_data = transposed_data
 
-    scorers_metrics = [
-        # Don't use hamming distance because we are looking at strings of differing lengths
-        (NonLLMStringSimilarity(distance_measure=DistanceMeasure.LEVENSHTEIN), "Non-LLM String Similarity"),
-        (BleuScore(), "BlueScore"),
-        (RougeScore(rouge_type='rougeL'), "Rouge Score"),
-        (SemanticSimilarity(embeddings=eval_embeddings), "LLM Semantic Similarity")
-    ]
-    
-    print(f"Now checking string and semantic similarity of {Fore.RED} {model}:")
-    for scorer, metric in scorers_metrics:
-        avg_score = asyncio.run(string_similarity(json_data, scorer, metric, pre_processing))
-        result.append({'model':model, 'avg_score': avg_score, 'metric':metric})
-    print()
+        scorers_metrics = [
+            # Don't use hamming distance because we are looking at strings of differing lengths
+            (NonLLMStringSimilarity(distance_measure=DistanceMeasure.LEVENSHTEIN), "Non-LLM String Similarity"),
+            (BleuScore(), "BlueScore"),
+            (RougeScore(rouge_type='rougeL'), "Rouge Score"),
+            (SemanticSimilarity(embeddings=eval_embeddings), "LLM Semantic Similarity")
+        ]
+        
+        print(f"Now checking string and semantic similarity of {Fore.RED} {model}:")
+        for scorer, metric in scorers_metrics:
+            avg_score = asyncio.run(string_similarity(json_data, scorer, metric, pre_processing))
+            result.append({'model':model, 'avg_score': avg_score, 'metric':metric})
+        print()
 
-transposed_path = 'transpose_' if transpose else ''
-preprocessed_path = 'preprocessed_' if pre_processing else ''
-filepath = f'./data/results/similarity_{transposed_path}{preprocessed_path}variants.json'
+    transposed_path = 'transpose_' if transpose else ''
+    preprocessed_path = 'preprocessed_' if pre_processing else ''
+    filepath = f'./data/results/similarity_{embedding_model}_{transposed_path}{preprocessed_path}variants.json'
 
-with open(filepath, 'w') as f:
-    json.dump(result, f)
+    with open(filepath, 'w') as f:
+        json.dump(result, f)
