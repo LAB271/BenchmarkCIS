@@ -1,22 +1,14 @@
 from ragas import SingleTurnSample
-from ragas.metrics import NonLLMStringSimilarity, SemanticSimilarity, BleuScore, RougeScore, DistanceMeasure
+from metrics.consistency import ConsistencyMetric
 from ragas import evaluate
-from ragas.embeddings import LangchainEmbeddingsWrapper, LlamaIndexEmbeddingsWrapper
+from ragas.embeddings import LangchainEmbeddingsWrapper
 from langchain_openai import OpenAIEmbeddings
-from llama_index.embeddings.openai import OpenAIEmbedding
-from langchain_huggingface.embeddings import HuggingFaceEmbeddings
 from nltk.tokenize import word_tokenize
 from nltk.corpus import wordnet, stopwords
 from nltk.stem import WordNetLemmatizer
 import nltk
-from nltk import pos_tag
 import asyncio
 import json
-from colorama import Fore, Style
-
-# TODO: Turn this into a RAGAs metric
-# TODO: Make the actual results available in JSON to make nice figures
-# TODO: Make it clear that the code expects a list of size minimum 2
 
 # POS tag mapping function from nltk POS tag to wordnet POS tag
 def get_wordnet_pos(treebank_tag):
@@ -86,7 +78,6 @@ def create_permutations(question_group, pre_processing):
 
 
 models = ["qwen2.5:0.5b", "qwen2.5:1.5b", "qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b", "gpt-4o"]
-# models = ["experiment"]
 result = []
 temp = [(False, False), (False, True), (True, False), (True, True)]
 for transpose, pre_processing in temp:
@@ -100,12 +91,8 @@ for transpose, pre_processing in temp:
         wnl = WordNetLemmatizer()
         stop_words = set(stopwords.words('english'))
 
-    # TODO: Add the support for the different dataset types (variants/duplicates)
     for model in models:
         eval_embeddings = LangchainEmbeddingsWrapper(OpenAIEmbeddings(model=embedding_model))
-        # eval_embeddings = LlamaIndexEmbeddingsWrapper(OpenAIEmbedding())
-        # TODO: Try to get the hugging face embedding models working
-        # eval_embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
         with open(f"./data/output/{model}_data.json", 'r', encoding='utf-8') as file:
             json_data = json.load(file)
 
