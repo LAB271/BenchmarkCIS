@@ -37,9 +37,9 @@ def preprocess_text(texts):
         result.append(' '.join(lemmatized_tokens))
     return result[0], result[1]
 
-async def string_similarity(data, scorer, metric, pre_processing):
+async def string_similarity(data, model, pre_processing, eval_embeddings):
     avg_model_score = 0
-    sum_average_question_group = 0
+    sum_all_question_group = 0
 
     # Creates permutations (n choose 2) to compare string similarity between all style of outputs.  
     for question_group in data:
@@ -47,16 +47,14 @@ async def string_similarity(data, scorer, metric, pre_processing):
 
         sum_score = 0    
         for single_turn_sample in permutations:
-            # print(single_turn_sample)
-            score = await scorer.single_turn_ascore(single_turn_sample)
-            # print(f"Temp score: {score}")
+            score = await ConsistencyMetric.single_turn_ascore(single_turn_sample, eval_embeddings = eval_embeddings)
             sum_score += score
             
         average_score_question_group = (sum_score / len(permutations))
-        sum_average_question_group += average_score_question_group
+        sum_all_question_group += average_score_question_group
         
-    avg_model_score = (sum_average_question_group / len(data))
-    print(f"{Style.RESET_ALL} The final Average {metric} for the Model: {avg_model_score}")
+    avg_model_score = (sum_all_question_group / len(data))
+    print(f"{model}: {avg_model_score}")
     return avg_model_score
 
 def create_permutations(question_group, pre_processing):
@@ -77,11 +75,11 @@ def create_permutations(question_group, pre_processing):
     return permutations
 
 
-models = ["qwen2.5:0.5b", "qwen2.5:1.5b", "qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b", "gpt-4o"]
+models = ["qwen2.5:0.5b"] #, "qwen2.5:1.5b", "qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b", "gpt-4o"]
 result = []
 temp = [(False, False), (False, True), (True, False), (True, True)]
+embedding_model = 'text-embedding-3-large'
 for transpose, pre_processing in temp:
-    embedding_model = 'text-embedding-3-large'
 
     if pre_processing:
         nltk.download('stopwords')
@@ -103,20 +101,9 @@ for transpose, pre_processing in temp:
             cols = len(json_data[0])
             transposed_data = [[json_data[j][i] for j in range(rows)] for i in range(cols)]
             json_data = transposed_data
-
-        scorers_metrics = [
-            # Don't use hamming distance because we are looking at strings of differing lengths
-            (NonLLMStringSimilarity(distance_measure=DistanceMeasure.LEVENSHTEIN), "Non-LLM String Similarity"),
-            (BleuScore(), "BlueScore"),
-            (RougeScore(rouge_type='rougeL'), "Rouge Score"),
-            (SemanticSimilarity(embeddings=eval_embeddings), "LLM Semantic Similarity")
-        ]
         
-        print(f"Now checking string and semantic similarity of {Fore.RED} {model}:")
-        for scorer, metric in scorers_metrics:
-            avg_score = asyncio.run(string_similarity(json_data, scorer, metric, pre_processing))
-            result.append({'model':model, 'avg_score': avg_score, 'metric':metric})
-        print()
+        avg_score = string_similarity(json_data, model=model, pre_processing=pre_processing, eval_embeddings=eval_embeddings)
+        result.append({'model':model, 'avg_score': avg_score})
 
     transposed_path = 'transpose_' if transpose else ''
     preprocessed_path = 'preprocessed_' if pre_processing else ''
