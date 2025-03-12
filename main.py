@@ -9,6 +9,15 @@ from nltk.stem import WordNetLemmatizer
 import nltk
 import asyncio
 import json
+from colorama import Fore, Style
+import os
+from dotenv import load_dotenv
+load_dotenv()
+api_key = os.getenv("OPENAI_API_KEY")
+
+# TODO: Turn this into a RAGAs metric
+# TODO: Make the actual results available in JSON to make nice figures
+# TODO: Make it clear that the code expects a list of size minimum 2
 
 # POS tag mapping function from nltk POS tag to wordnet POS tag
 def get_wordnet_pos(treebank_tag):
@@ -90,7 +99,10 @@ for transpose, pre_processing in temp:
         stop_words = set(stopwords.words('english'))
 
     for model in models:
-        eval_embeddings = LangchainEmbeddingsWrapper(OpenAIEmbeddings(model=embedding_model))
+        eval_embeddings = LangchainEmbeddingsWrapper(OpenAIEmbeddings(model=embedding_model, api_key=api_key))
+        # eval_embeddings = LlamaIndexEmbeddingsWrapper(OpenAIEmbedding())
+        # TODO: Try to get the hugging face embedding models working
+        # eval_embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
         with open(f"./data/output/{model}_data.json", 'r', encoding='utf-8') as file:
             json_data = json.load(file)
 
