@@ -15,10 +15,6 @@ from dotenv import load_dotenv
 load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
 
-# TODO: Turn this into a RAGAs metric
-# TODO: Make the actual results available in JSON to make nice figures
-# TODO: Make it clear that the code expects a list of size minimum 2
-
 # POS tag mapping function from nltk POS tag to wordnet POS tag
 def get_wordnet_pos(treebank_tag):
     if treebank_tag.startswith('J'):
@@ -46,17 +42,17 @@ def preprocess_text(texts):
         result.append(' '.join(lemmatized_tokens))
     return result[0], result[1]
 
-async def string_similarity(data, model, pre_processing, eval_embeddings):
+async def string_similarity(data, model, pre_processing, scorer):
     avg_model_score = 0
     sum_all_question_group = 0
 
     # Creates permutations (n choose 2) to compare string similarity between all style of outputs.  
     for question_group in data:
         permutations = create_permutations(question_group, pre_processing)
-
+        # TODO: Change this to use evaluate from RAGAS
         sum_score = 0    
         for single_turn_sample in permutations:
-            score = await ConsistencyMetric.single_turn_ascore(single_turn_sample, eval_embeddings = eval_embeddings)
+            score = await scorer.single_turn_ascore(single_turn_sample)
             sum_score += score
             
         average_score_question_group = (sum_score / len(permutations))
@@ -88,6 +84,9 @@ models = ["qwen2.5:0.5b"] #, "qwen2.5:1.5b", "qwen2.5:3b", "qwen2.5:7b", "qwen2.
 result = []
 temp = [(False, False), (False, True), (True, False), (True, True)]
 embedding_model = 'text-embedding-3-large'
+eval_embeddings = LangchainEmbeddingsWrapper(OpenAIEmbeddings(model=embedding_model, api_key=api_key))
+scorer = ConsistencyMetric(embeddings = eval_embeddings)
+
 for transpose, pre_processing in temp:
 
     if pre_processing:
@@ -99,10 +98,6 @@ for transpose, pre_processing in temp:
         stop_words = set(stopwords.words('english'))
 
     for model in models:
-        eval_embeddings = LangchainEmbeddingsWrapper(OpenAIEmbeddings(model=embedding_model, api_key=api_key))
-        # eval_embeddings = LlamaIndexEmbeddingsWrapper(OpenAIEmbedding())
-        # TODO: Try to get the hugging face embedding models working
-        # eval_embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
         with open(f"./data/output/{model}_data.json", 'r', encoding='utf-8') as file:
             json_data = json.load(file)
 
@@ -114,7 +109,7 @@ for transpose, pre_processing in temp:
             transposed_data = [[json_data[j][i] for j in range(rows)] for i in range(cols)]
             json_data = transposed_data
         
-        avg_score = string_similarity(json_data, model=model, pre_processing=pre_processing, eval_embeddings=eval_embeddings)
+        avg_score = asyncio.run(string_similarity(json_data, model=model, pre_processing=pre_processing, scorer=scorer))
         result.append({'model':model, 'avg_score': avg_score})
 
     transposed_path = 'transpose_' if transpose else ''

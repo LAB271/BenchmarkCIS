@@ -2,7 +2,7 @@
 from dataclasses import dataclass, field
 
 # import the base classes
-from ragas.metrics.base import MetricWithLLM, SingleTurnMetric, MetricType
+from ragas.metrics.base import MetricWithEmbeddings, SingleTurnMetric, MetricType
 from ragas.metrics import NonLLMStringSimilarity, SemanticSimilarity, BleuScore, RougeScore, DistanceMeasure
 
 # import types
@@ -12,7 +12,7 @@ from ragas.dataset_schema import SingleTurnSample
 
 
 @dataclass
-class ConsistencyMetric(MetricWithLLM, SingleTurnMetric):
+class ConsistencyMetric(MetricWithEmbeddings, SingleTurnMetric):
     name: str = "consistency_metric"
     _required_columns: t.Dict[MetricType, t.Set[str]] = field(
         default_factory=lambda: {MetricType.SINGLE_TURN: {"response", "reference"}}
@@ -20,7 +20,7 @@ class ConsistencyMetric(MetricWithLLM, SingleTurnMetric):
 
     def __post_init__(self):
         # init the faithfulness metric
-        self.semantic_metric = SemanticSimilarity(embeddings=self.eval_embeddings)
+        self.semantic_metric = SemanticSimilarity(embeddings=self.embeddings)
         self.string_similarity_metric = NonLLMStringSimilarity(distance_measure=DistanceMeasure.LEVENSHTEIN)
         self.blue_metric = BleuScore()
         self.rouge_metric = RougeScore(rouge_type='rougeL')
@@ -37,6 +37,6 @@ class ConsistencyMetric(MetricWithLLM, SingleTurnMetric):
     ) -> float:
         avg_score = 0
         for scorer in self.scorer_metrics:
-            avg_score += await scorer._single_turn_ascore(sample)
+            avg_score += await scorer._single_turn_ascore(sample, callbacks)
         avg_score = avg_score / len(self.scorer_metrics)
         return avg_score
