@@ -13,6 +13,10 @@ from nltk import pos_tag
 import asyncio
 import json
 from colorama import Fore, Style
+import os
+from dotenv import load_dotenv
+load_dotenv()
+api_key = os.getenv("OPENAI_API_KEY")
 
 # TODO: Turn this into a RAGAs metric
 # TODO: Make the actual results available in JSON to make nice figures
@@ -85,8 +89,8 @@ def create_permutations(question_group, pre_processing):
     return permutations
 
 
-models = ["qwen2.5:0.5b", "qwen2.5:1.5b", "qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b", "gpt-4o"]
-# models = ["experiment"]
+# models = ["qwen2.5:0.5b", "qwen2.5:1.5b", "qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b", "gpt-4o"]
+models = ["experiment"]
 result = []
 temp = [(False, False), (False, True), (True, False), (True, True)]
 for transpose, pre_processing in temp:
@@ -102,7 +106,7 @@ for transpose, pre_processing in temp:
 
     # TODO: Add the support for the different dataset types (variants/duplicates)
     for model in models:
-        eval_embeddings = LangchainEmbeddingsWrapper(OpenAIEmbeddings(model=embedding_model))
+        eval_embeddings = LangchainEmbeddingsWrapper(OpenAIEmbeddings(model=embedding_model, api_key=api_key))
         # eval_embeddings = LlamaIndexEmbeddingsWrapper(OpenAIEmbedding())
         # TODO: Try to get the hugging face embedding models working
         # eval_embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
