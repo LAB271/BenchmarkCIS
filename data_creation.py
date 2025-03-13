@@ -6,6 +6,8 @@ from dotenv import load_dotenv
 load_dotenv()
 import os
 
+# TODO: Make the temperature change thing (maybe also top_k)
+
 def create_duplicates(df: pd.DataFrame, n:int):
     duplicates = []
     for _, row in df.iterrows():
@@ -19,8 +21,6 @@ def create_duplicates(df: pd.DataFrame, n:int):
         json.dump(duplicates, f)
 
 # Generate answers from LLM
-# TODO: would be nice to have another function to populate the questions with a larger amount of questions. The same questions but phrased differently to see how consistent these models are.
-# Would also be nice to choose either openai or ollama
 def create_variants(n:int, df: pd.DataFrame, input_model:str = 'gpt-4o'):
     variants = []
     for _, row in df.iterrows():
@@ -80,7 +80,7 @@ def generate_response(output_model:str, path:str, q_type:str):
 api_key = os.getenv("OPENAI_API_KEY")
 models = ["qwen2.5:0.5b", "qwen2.5:1.5b", "qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b", "gpt-4o"]
 input_model = 'gpt-4o'
-q_type = 'variants'
+q_type = 'duplicates'
 
 # LOAD DATA
 df = pd.read_json("hf://datasets/databricks/databricks-dolly-15k/databricks-dolly-15k.jsonl", lines=True)
@@ -89,7 +89,7 @@ df_open_qa = filtered_df.head(10)
 
 # CREATING QUESTIONS
 # create_variants(df=df_open_qa, n=10)
-create_duplicates(df=df_open_qa, n=10)
+# create_duplicates(df=df_open_qa, n=10)
 
 for model in models:
     if model.startswith('gpt'):
@@ -103,4 +103,4 @@ for model in models:
     path = f"./data/questions/{input_model}_{q_type}.json"
     if q_type == 'duplicates':
         path = "./data/questions/duplicates.json"
-    generate_response(output_model=model, path=path)
+    generate_response(output_model=model, path=path, q_type=q_type)
