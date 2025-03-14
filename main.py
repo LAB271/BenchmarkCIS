@@ -89,10 +89,13 @@ def create_permutations(question_group, pre_processing):
     return permutations
 
 
-# models = ["qwen2.5:0.5b", "qwen2.5:1.5b", "qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b", "gpt-4o"]
-models = ["experiment"]
+models = ["qwen2.5:0.5b", "qwen2.5:1.5b", "qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b", "gpt-4o"]
+# models = ["experiment"]
 result = []
 temp = [(False, False), (False, True), (True, False), (True, True)]
+duplicates = True
+duplicates_path = 'duplicates' if duplicates else 'variants'
+
 for transpose, pre_processing in temp:
     embedding_model = 'text-embedding-3-large'
 
@@ -110,7 +113,7 @@ for transpose, pre_processing in temp:
         # eval_embeddings = LlamaIndexEmbeddingsWrapper(OpenAIEmbedding())
         # TODO: Try to get the hugging face embedding models working
         # eval_embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
-        with open(f"./data/output/{model}_data.json", 'r', encoding='utf-8') as file:
+        with open(f"./data/output/{model}_data{duplicates_path}.json", 'r', encoding='utf-8') as file:
             json_data = json.load(file)
 
         # Assumes square matrix
@@ -137,7 +140,7 @@ for transpose, pre_processing in temp:
 
     transposed_path = 'transpose_' if transpose else ''
     preprocessed_path = 'preprocessed_' if pre_processing else ''
-    filepath = f'./data/results/similarity_{embedding_model}_{transposed_path}{preprocessed_path}variants.json'
+    filepath = f'./data/results/similarity_{embedding_model}_{transposed_path}{preprocessed_path}{duplicates_path}.json'
 
     with open(filepath, 'w') as f:
         json.dump(result, f)
