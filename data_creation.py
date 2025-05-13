@@ -19,8 +19,11 @@ def create_duplicates(df: pd.DataFrame, n:int):
         text += f"q_{n}:" + row['instruction']
         duplicates.append({'response':text})
     
-    with open(f'./data/questions/duplicates.json', 'w') as f:
-        json.dump(duplicates, f)
+    final_json = {
+        "is_duplicates": True,
+        "questions": duplicates
+    }
+    save_to_mongo(final_json, "questions")
 
 # Generate answers from LLM
 def create_variants(n:int, df: pd.DataFrame, input_model:str = 'gpt-4o'):
@@ -42,18 +45,21 @@ def create_variants(n:int, df: pd.DataFrame, input_model:str = 'gpt-4o'):
             "response":"q_0:"+row['instruction']+"\n\n"+output.choices[0].message.content,
         })
     
-    with open(f'./data/questions/{input_model}_variants.json', 'w') as f:
-        json.dump(variants, f)
+    final_json = {
+        "is_duplicates": False,
+        "questions": variants
+    }
+    save_to_mongo(final_json, "questions")
 
-def save_to_mongo(final_json):
+def save_to_mongo(final_json, collection):
     uri = os.getenv("MONGODB_URI")
     client = MongoClient(uri, server_api=ServerApi('1'))
     try:
         db = client["data"]
-        collection = db["output"]
+        collection = db[collection]
         if final_json:
             result = collection.insert_one(final_json)
-            print("Saved answers from to MongoDB")
+            print("Saved to MongoDB")
         else:
             print("No documents to insert.")
     except Exception as e:
@@ -107,12 +113,13 @@ def generate_response(data:dict, output_model:str):
         "is_duplicates": data['is_duplicates'],              
         "answers": dataset
     }
-    save_to_mongo(final_json)
+    collection = "output"
+    save_to_mongo(final_json, collection)
     
 
 # TODO: make this main function or some
 api_key = os.getenv("OPENAI_API_KEY")
-models = ["qwen2.5:0.5b"] #, "qwen2.5:1.5b", "qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b", "gpt-4o"]
+models = ["qwen2.5:0.5b", "qwen2.5:1.5b", "qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b", "gpt-4o"]
 input_model = 'gpt-4o'
 is_duplicates = False
 
@@ -125,6 +132,7 @@ df_open_qa = filtered_df.head(10)
 # create_variants(df=df_open_qa, n=10)
 # create_duplicates(df=df_open_qa, n=10)
 
+# ANSWERING QUESTIONS
 data = read_mongo(is_duplicates)
 for model in models:
     if model.startswith('gpt'):
