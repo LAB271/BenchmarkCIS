@@ -7,6 +7,8 @@ load_dotenv()
 import os
 
 # TODO: Make the temperature change thing (maybe also top_k)
+# TODO: Add documentation
+# TODO: Make this a class
 
 def create_duplicates(df: pd.DataFrame, n:int):
     duplicates = []
@@ -43,7 +45,7 @@ def create_variants(n:int, df: pd.DataFrame, input_model:str = 'gpt-4o'):
     with open(f'./data/questions/{input_model}_variants.json', 'w') as f:
         json.dump(variants, f)
 
-def generate_response(output_model:str, path:str, q_type:str):
+def generate_response(output_model:str, path:str, q_type:str, temp:bool):
     dataset = []
     with open(path, 'r', encoding='utf-8') as file:
         data = json.load(file)
@@ -65,15 +67,32 @@ def generate_response(output_model:str, path:str, q_type:str):
                     "role": "user",
                     "content": question
                 }]
-                
-            output = client.chat.completions.create(model=output_model, messages=message)
-            question_grouped.append({
-                "user_input": question,
-                "response":output.choices[0].message.content,
-            })
+            
+            if temp:
+                start = 0
+                stop = 2
+                step = 0.5
+                while start <= stop:
+                    print(f"Going to start requesting with this temp: {start}")
+                    output = client.chat.completions.create(model=output_model, messages=message, temperature=start)
+                    print(f"Made request with temp: {start}")
+                    question_grouped.append({
+                        "user_input": question,
+                        "response":output.choices[0].message.content,
+                        "temp":start,
+                    })
+                    start += step
+            else:
+                output = client.chat.completions.create(model=output_model, messages=message)
+                question_grouped.append({
+                    "user_input": question,
+                    "response":output.choices[0].message.content,
+                })
         dataset.append(question_grouped)
+        print("finished group")
 
-    with open(f'./data/output/{output_model}_data_{q_type}.json', 'w') as f:
+    temp_str = '_temp' if temp else ''
+    with open(f'./data/output/{output_model}_data_{q_type}{temp_str}.json', 'w') as f:
         json.dump(dataset, f)
 
 # TODO: make this main function or some
@@ -81,6 +100,7 @@ api_key = os.getenv("OPENAI_API_KEY")
 models = ["qwen2.5:0.5b", "qwen2.5:1.5b", "qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b", "gpt-4o"]
 input_model = 'gpt-4o'
 q_type = 'duplicates'
+temp = True
 
 # LOAD DATA
 df = pd.read_json("hf://datasets/databricks/databricks-dolly-15k/databricks-dolly-15k.jsonl", lines=True)
@@ -103,4 +123,4 @@ for model in models:
     path = f"./data/questions/{input_model}_{q_type}.json"
     if q_type == 'duplicates':
         path = "./data/questions/duplicates.json"
-    generate_response(output_model=model, path=path, q_type=q_type)
+    generate_response(output_model=model, path=path, q_type=q_type, temp = temp)
