@@ -1,5 +1,5 @@
 .env
-experiment.py
+experiment.ipynb
 data/output/experiment_data.json
 data/results/experiment.txt
 distribution.txt
