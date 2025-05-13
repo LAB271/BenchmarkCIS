@@ -60,15 +60,24 @@ def save_to_mongo(final_json):
         print(e)
         path_dup = '_duplicates' if final_json['is_duplicates'] else ''
         with open(f'./data/failed/{final_json['model']}{path_dup}.json', 'w') as f:
-            json.dump(final_json, f)
+            json.dump(final_json, f, indent=2)
 
-def generate_response(output_model:str, input_path:str, q_type:str):
+def read_mongo(is_duplicates):
+    uri = os.getenv("MONGODB_URI")
+    client = MongoClient(uri, server_api=ServerApi('1'))
+    try:
+        db = client["data"]
+        collection = db["questions"]
+        document = collection.find_one({"is_duplicates":is_duplicates})
+        return document
+    except Exception as e:
+        print(e)
+        
+def generate_response(data:dict, output_model:str):
     dataset = {}
     id = 1 #ID for questions
-    with open(input_path, 'r', encoding='utf-8') as file:
-        data = json.load(file)
 
-    for dict in data:
+    for dict in data['questions']:
         cleaned_questions_block = re.sub(r'q_\d+:\s*', '', dict['response'])
 
         # Split the cleaned string into separate questions
@@ -93,10 +102,9 @@ def generate_response(output_model:str, input_path:str, q_type:str):
             })
         dataset[f'question_{id}'] = question_grouped
         id += 1
-    is_duplicates = "duplicates" in input_path
     final_json = {
         "model": output_model,  
-        "is_duplicates": is_duplicates,              
+        "is_duplicates": data['is_duplicates'],              
         "answers": dataset
     }
     save_to_mongo(final_json)
@@ -106,7 +114,7 @@ def generate_response(output_model:str, input_path:str, q_type:str):
 api_key = os.getenv("OPENAI_API_KEY")
 models = ["qwen2.5:0.5b"] #, "qwen2.5:1.5b", "qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b", "gpt-4o"]
 input_model = 'gpt-4o'
-q_type = 'duplicates'
+is_duplicates = False
 
 # LOAD DATA
 df = pd.read_json("hf://datasets/databricks/databricks-dolly-15k/databricks-dolly-15k.jsonl", lines=True)
@@ -117,6 +125,7 @@ df_open_qa = filtered_df.head(10)
 # create_variants(df=df_open_qa, n=10)
 # create_duplicates(df=df_open_qa, n=10)
 
+data = read_mongo(is_duplicates)
 for model in models:
     if model.startswith('gpt'):
         client = OpenAI(api_key=api_key)
@@ -126,7 +135,4 @@ for model in models:
             api_key='ollama', # required, but unused
         )
 
-    path = f"./data/questions/{input_model}_{q_type}.json"
-    if q_type == 'duplicates':
-        path = "./data/questions/experiment.json"
-    generate_response(output_model=model, input_path=path, q_type=q_type)
+    generate_response(data=data, output_model=model)
