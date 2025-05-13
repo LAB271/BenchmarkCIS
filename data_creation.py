@@ -2,6 +2,8 @@ import re
 import pandas as pd
 import json
 from openai import OpenAI
+from pymongo.mongo_client import MongoClient
+from pymongo.server_api import ServerApi
 from dotenv import load_dotenv
 load_dotenv()
 import os
@@ -43,9 +45,27 @@ def create_variants(n:int, df: pd.DataFrame, input_model:str = 'gpt-4o'):
     with open(f'./data/questions/{input_model}_variants.json', 'w') as f:
         json.dump(variants, f)
 
-def generate_response(output_model:str, path:str, q_type:str):
-    dataset = []
-    with open(path, 'r', encoding='utf-8') as file:
+def save_to_mongo(final_json):
+    uri = os.getenv("MONGODB_URI")
+    client = MongoClient(uri, server_api=ServerApi('1'))
+    try:
+        db = client["data"]
+        collection = db["output"]
+        if final_json:
+            result = collection.insert_one(final_json)
+            print("Saved answers from to MongoDB")
+        else:
+            print("No documents to insert.")
+    except Exception as e:
+        print(e)
+        path_dup = '_duplicates' if final_json['is_duplicates'] else ''
+        with open(f'./data/failed/{final_json['model']}{path_dup}.json', 'w') as f:
+            json.dump(final_json, f)
+
+def generate_response(output_model:str, input_path:str, q_type:str):
+    dataset = {}
+    id = 1 #ID for questions
+    with open(input_path, 'r', encoding='utf-8') as file:
         data = json.load(file)
 
     for dict in data:
@@ -71,14 +91,20 @@ def generate_response(output_model:str, path:str, q_type:str):
                 "user_input": question,
                 "response":output.choices[0].message.content,
             })
-        dataset.append(question_grouped)
-
-    with open(f'./data/output/{output_model}_data_{q_type}.json', 'w') as f:
-        json.dump(dataset, f)
+        dataset[f'question_{id}'] = question_grouped
+        id += 1
+    is_duplicates = "duplicates" in input_path
+    final_json = {
+        "model": output_model,  
+        "is_duplicates": is_duplicates,              
+        "answers": dataset
+    }
+    save_to_mongo(final_json)
+    
 
 # TODO: make this main function or some
 api_key = os.getenv("OPENAI_API_KEY")
-models = ["qwen2.5:0.5b", "qwen2.5:1.5b", "qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b", "gpt-4o"]
+models = ["qwen2.5:0.5b"] #, "qwen2.5:1.5b", "qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b", "gpt-4o"]
 input_model = 'gpt-4o'
 q_type = 'duplicates'
 
@@ -102,5 +128,5 @@ for model in models:
 
     path = f"./data/questions/{input_model}_{q_type}.json"
     if q_type == 'duplicates':
-        path = "./data/questions/duplicates.json"
-    generate_response(output_model=model, path=path, q_type=q_type)
+        path = "./data/questions/experiment.json"
+    generate_response(output_model=model, input_path=path, q_type=q_type)
