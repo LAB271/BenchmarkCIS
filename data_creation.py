@@ -78,7 +78,8 @@ def read_mongo(is_duplicates):
         return document
     except Exception as e:
         print(e)
-        
+
+# TODO: break down this function cause it is unclear what it is doing now   
 def generate_response(data:dict, output_model:str):
     dataset = {}
     id = 1 #ID for questions
@@ -90,7 +91,7 @@ def generate_response(data:dict, output_model:str):
         question_list = cleaned_questions_block.split("\n")
         # This will allow me to group the different type of questions with their variants
         question_grouped = []
-
+        flag = False
         for question in question_list:
             # Sometimes generation fails to have two `\n\n` so we have empty strings
             if question == '':
@@ -100,14 +101,32 @@ def generate_response(data:dict, output_model:str):
                     "role": "user",
                     "content": question
                 }]
-                
-            output = client.chat.completions.create(model=output_model, messages=message)
+            try:
+                output = client.chat.completions.create(model=output_model, messages=message)
+            except Exception as e:
+                print(e)
+                flag = True
+                print(f"Final question group handled: {id}")
+                break
+            
             question_grouped.append({
                 "user_input": question,
                 "response":output.choices[0].message.content,
             })
         dataset[f'question_{id}'] = question_grouped
         id += 1
+
+        if flag:
+            final_json = {
+                "model": output_model,  
+                "is_duplicates": dict['is_duplicates'],              
+                "answers": dataset
+            }
+            path_dup = "_duplicates" if dict['is_duplicates'] else ''
+            with open(f'./data/failed/{final_json['model']}{path_dup}.json', 'w') as f:
+                json.dump(final_json, f, indent=2)
+            return flag
+        
     final_json = {
         "model": output_model,  
         "is_duplicates": data['is_duplicates'],              
@@ -143,4 +162,7 @@ for model in models:
             api_key='ollama', # required, but unused
         )
 
-    generate_response(data=data, output_model=model)
+    early_stop_flag = generate_response(data=data, output_model=model)
+    if early_stop_flag:
+        print("Process stopped early, files have been saved in './data/failed'")
+        break
