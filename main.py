@@ -17,7 +17,8 @@ import os
 from dotenv import load_dotenv
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
-import bson
+from concurrent.futures import ProcessPoolExecutor
+import functools
 load_dotenv(override=True)
 api_key = os.getenv("OPENAI_API_KEY")
 
@@ -116,6 +117,8 @@ def get_wordnet_pos(treebank_tag):
         return wordnet.NOUN  # Default to noun
 
 def preprocess_text(texts):
+    wnl = WordNetLemmatizer()
+    stop_words = set(stopwords.words('english'))
     result = []
     for text in texts:
         # Tokenize
@@ -129,37 +132,97 @@ def preprocess_text(texts):
         result.append(' '.join(lemmatized_tokens))
     return result[0], result[1]
 
-async def string_similarity(data, scorer, results_json, pre_processing):
-    avg_model_score = 0
-    sum_average_question_group = 0
-    question_id = 1
+#
+# The helper function that processes one question group.
+#
+# Because this function will be run in a separate process, it must be (or only call) synchronous code.
+# However, since you need to await scorer.single_turn_ascore(), we wrap a nested async function with asyncio.run().
+#
+def process_question_group_sync(question_group, pre_processing, question_id, metric):
+    """
+    Process one question_group in a synchronous context.
 
-    # Creates permutations (n choose 2) to compare string similarity between all style of outputs.  
-    for question_group in data:
-        permutations = create_permutations(question_group, pre_processing)
-        temp = []
+    scorer_data is assumed to be pickleable or re-creatable in each process.
+    """
+    eval_embeddings = LangchainEmbeddingsWrapper(OpenAIEmbeddings(model='text-embedding-3-large', api_key=api_key))
+    score_dict = {
+        "Non-LLM String Similarity": NonLLMStringSimilarity(distance_measure=DistanceMeasure.LEVENSHTEIN),
+        "BlueScore": BleuScore(),
+        "Rouge Score": RougeScore(rouge_type='rougeL'),
+        # "LLM Semantic Similarity": SemanticSimilarity(embeddings=eval_embeddings)
+    }
+    # First, generate permutations.
+    permutations = create_permutations(question_group, pre_processing)
+    temp = []
+    sum_score = 0
+    scorer = score_dict[metric]
 
-        sum_score = 0    
+    # Define an async inner function to run the asynchronous scorer calls.
+    async def process_permutations():
+        nonlocal sum_score, temp
         for single_turn_sample in permutations:
-            # print(single_turn_sample)
             try:
+                # Here we await the asynchronous scoring.
                 score = await scorer.single_turn_ascore(single_turn_sample)
-                temp.append({"reference":single_turn_sample.reference, "response":single_turn_sample.response, "score":score})
+                temp.append({
+                    "reference": single_turn_sample.reference,
+                    "response": single_turn_sample.response,
+                    "score": score
+                })
             except Exception as e:
-                print(e)
-                results_json[f"question_{question_id}"] = temp
-                save_locally(results_json)
+                # Print the exception and optionally do additional processing.
+                print(f"Error in process {os.getpid()} for question {question_id}: {e}")
+                # If you want to persist partial results, you might call save_locally() here.
+                save_locally({f"question_{question_id}": temp})
             sum_score += score
-        
-        results_json[f"question_{question_id}"] = temp
-        question_id += 1    
 
-        average_score_question_group = (sum_score / len(permutations))
-        sum_average_question_group += average_score_question_group
+    # Run the async inner function in a new event loop.
+    asyncio.run(process_permutations())
+
+    # Compute the average score for this question group.
+    average_score_question_group = sum_score / len(permutations) if permutations else 0
+
+    # Return the results as a tuple that we can later aggregate.
+    return {f"question_{question_id}": temp}, average_score_question_group
+
+#
+# The main async function.
+#
+async def string_similarity(data, metric, results_json, pre_processing):
+    """
+    Parallelizes processing on a per-question-group basis using a ProcessPoolExecutor.
+    """
+    sum_average_question_group = 0
+
+    # Create a ProcessPoolExecutor - you might tune the max_workers parameter as needed.
+    loop = asyncio.get_running_loop()
+    tasks = []
+    with ProcessPoolExecutor(max_workers=11) as executor:
+        # Submit each question group to a worker process.
+        # Note: We assume that scorer is pickleable or that scorer_data is a lightweight object.
+        for i, question_group in enumerate(data, start=1):
+            worker = functools.partial(
+                process_question_group_sync,
+                question_group,
+                pre_processing,
+                i,
+                metric
+            )
+            tasks.append(loop.run_in_executor(executor, worker))
         
+        # Wait for all processes to finish.
+        results = await asyncio.gather(*tasks)
+
+    # Aggregate results from all processes into the results_json.
+    for res, avg in results:
+        results_json.update(res)
+        sum_average_question_group += avg
+
     save_to_mongo(results_json, "partial_results")
-    avg_model_score = (sum_average_question_group / len(data))
-    print(f"{Style.RESET_ALL} The final Average {results_json["metric"]} for the Model: {avg_model_score}")
+    avg_model_score = sum_average_question_group / len(data) if data else 0
+
+    # Adjust the print message to avoid shadowing quotes.
+    print(f"Final Average metric for the Model: {avg_model_score}")
     return avg_model_score
 
 def create_permutations(question_group, pre_processing):
@@ -179,75 +242,62 @@ def create_permutations(question_group, pre_processing):
         permutations.extend(permutation)
     return permutations
 
-models = ["qwen2.5:0.5b", "qwen2.5:1.5b", "qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b", "gpt-4o"]
-combinations = [(False, False), (False, True), (True, False), (True, True)]
-# Determine if you're looking at duplicate questions or different variants
-is_duplicates = True
-duplicates_path = 'duplicates' if is_duplicates else 'variants'
-embedding_model = 'text-embedding-3-large'
+if __name__ == "__main__":
+    models = ["qwen2.5:0.5b", "qwen2.5:1.5b", "qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b", "gpt-4o"]
+    combinations = [(False, False), (False, True), (True, False), (True, True)]
+    # Determine if you're looking at duplicate questions or different variants
+    is_duplicates = True
+    duplicates_path = 'duplicates' if is_duplicates else 'variants'
 
-for transpose, pre_processing in combinations:
-    result = []
-    if pre_processing:
-        nltk.download('stopwords')
-        nltk.download('wordnet')
-        nltk.download('omw-1.4')
-        nltk.download('averaged_perceptron_tagger_eng')
-        wnl = WordNetLemmatizer()
-        stop_words = set(stopwords.words('english'))
+    for transpose, pre_processing in combinations:
+        result = []
+        if pre_processing:
+            nltk.download('stopwords')
+            nltk.download('wordnet')
+            nltk.download('omw-1.4')
+            nltk.download('averaged_perceptron_tagger_eng')
 
-    # TODO: Add the support for the different dataset types (variants/duplicates)
-    for model in models:
-        eval_embeddings = LangchainEmbeddingsWrapper(OpenAIEmbeddings(model=embedding_model, api_key=api_key))
-        # eval_embeddings = LlamaIndexEmbeddingsWrapper(OpenAIEmbedding())
-        # TODO: Try to get the hugging face embedding models working
-        # eval_embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
+        # TODO: Add the support for the different dataset types (variants/duplicates)
+        for model in models:
+            # Read from mongo
+            data = read_mongo("output", is_duplicates, model)
+            json_data = convert_answers(data['answers'])
+
+            # Assumes square matrix
+            transposed_data = []
+            if transpose:
+                rows = len(json_data)
+                cols = len(json_data[0])
+                transposed_data = [[json_data[j][i] for j in range(rows)] for i in range(cols)]
+                json_data = transposed_data
+            
+            # TODO: there are now two places where I define these metrics so changing one makes it hard to change in another, fix that!
+            scorers_metrics = [
+                # Don't use hamming distance because we are looking at strings of differing lengths
+                "Non-LLM String Similarity",
+                "BlueScore",
+                "Rouge Score",
+                # "LLM Semantic Similarity"
+            ]
+            
+            print(f"Now checking string and semantic similarity of {Fore.RED} {model}:")
+            for metric in scorers_metrics:
+                base_dict = {
+                    "metric": metric,
+                    "model": model,
+                    "is_duplicates": is_duplicates,
+                    "is_preprocessed": pre_processing,
+                    "is_transposed": transpose,
+                }
+                avg_score = asyncio.run(string_similarity(json_data, metric, base_dict, pre_processing))
+                result.append({'model':model, 'avg_score': avg_score, 'metric':metric})
+            print()
         
-        # Read from mongo
-        data = read_mongo("output", is_duplicates, model)
-        json_data = convert_answers(data['answers'])
+        final_json = {
+            "is_duplicates": is_duplicates,
+            "is_preprocessed": pre_processing,
+            "is_transposed": transpose,
+            "result": result
+        }
 
-        # Assumes square matrix
-        transposed_data = []
-        if transpose:
-            rows = len(json_data)
-            cols = len(json_data[0])
-            transposed_data = [[json_data[j][i] for j in range(rows)] for i in range(cols)]
-            json_data = transposed_data
-
-        scorers_metrics = [
-            # Don't use hamming distance because we are looking at strings of differing lengths
-            (NonLLMStringSimilarity(distance_measure=DistanceMeasure.LEVENSHTEIN), "Non-LLM String Similarity"),
-            (BleuScore(), "BlueScore"),
-            (RougeScore(rouge_type='rougeL'), "Rouge Score"),
-            # (SemanticSimilarity(embeddings=eval_embeddings), "LLM Semantic Similarity")
-        ]
-        
-        print(f"Now checking string and semantic similarity of {Fore.RED} {model}:")
-        for scorer, metric in scorers_metrics:
-            base_dict = {
-                "metric": metric,
-                "model": model,
-                "is_duplicates": is_duplicates,
-                "is_preprocessed": pre_processing,
-                "is_transposed": transpose,
-            }
-            avg_score = asyncio.run(string_similarity(json_data, scorer, base_dict, pre_processing))
-            result.append({'model':model, 'avg_score': avg_score, 'metric':metric})
-        print()
-
-    # transposed_path = 'transpose_' if transpose else ''
-    # preprocessed_path = 'preprocessed_' if pre_processing else ''
-    # filepath = f'./data/results/similarity_{embedding_model}_{transposed_path}{preprocessed_path}{duplicates_path}.json'
-
-    # with open(filepath, 'w') as f:
-    #     json.dump(result, f)
-    
-    final_json = {
-        "is_duplicates": is_duplicates,
-        "is_preprocessed": pre_processing,
-        "is_transposed": transpose,
-        "result": result
-    }
-
-    save_to_mongo(final_json, "avg_result")
+        save_to_mongo(final_json, "avg_result")
