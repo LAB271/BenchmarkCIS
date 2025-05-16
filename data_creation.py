@@ -41,6 +41,7 @@ def create_variants(n:int, df: pd.DataFrame, input_model:str = 'gpt-4o'):
         ]
         client = OpenAI(api_key=api_key)
         output = client.chat.completions.create(model=input_model, messages=messages)
+        
         variants.append({
             "response":"q_0:"+row['instruction']+"\n\n"+output.choices[0].message.content,
         })
@@ -83,6 +84,7 @@ def read_mongo(is_duplicates):
 def generate_response(data:dict, output_model:str):
     dataset = {}
     id = 1 #ID for questions
+    flag = False
 
     for dict in data['questions']:
         cleaned_questions_block = re.sub(r'q_\d+:\s*', '', dict['response'])
@@ -91,7 +93,6 @@ def generate_response(data:dict, output_model:str):
         question_list = cleaned_questions_block.split("\n")
         # This will allow me to group the different type of questions with their variants
         question_grouped = []
-        flag = False
         for question in question_list:
             # Sometimes generation fails to have two `\n\n` so we have empty strings
             if question == '':
@@ -134,6 +135,7 @@ def generate_response(data:dict, output_model:str):
     }
     collection = "output"
     save_to_mongo(final_json, collection)
+    return flag
     
 
 # TODO: make this main function or some
