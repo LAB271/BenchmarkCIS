@@ -189,7 +189,6 @@ async def string_similarity_parallel(data, results_json, pre_processing):
     tasks = []
     with ProcessPoolExecutor(max_workers=len(data)) as executor:
         # Submit each question group to a worker process.
-        # Note: We assume that scorer is pickleable or that scorer_data is a lightweight object.
         for i, question_group in enumerate(data, start=1):
             worker = functools.partial(
                 process_question_group_sync,
