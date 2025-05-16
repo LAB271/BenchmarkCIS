@@ -237,6 +237,7 @@ async def string_similarity(data, scorer, results_json, pre_processing):
                 print(e)
                 results_json[f"question_{question_id}"] = temp
                 save_locally(results_json)
+                score = 0
             sum_score += score
         
         results_json[f"question_{question_id}"] = temp
