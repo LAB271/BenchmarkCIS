@@ -4,6 +4,9 @@ import json
 from openai import OpenAI
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
+from concurrent.futures import ProcessPoolExecutor
+import functools
+import asyncio
 from dotenv import load_dotenv
 load_dotenv()
 import os
@@ -28,6 +31,8 @@ def create_duplicates(df: pd.DataFrame, n:int):
 # Generate answers from LLM
 def create_variants(n:int, df: pd.DataFrame, input_model:str = 'gpt-4o'):
     variants = []
+    api_key = os.getenv("OPENAI_API_KEY")
+
     for _, row in df.iterrows():
         messages = [
             {
@@ -51,6 +56,29 @@ def create_variants(n:int, df: pd.DataFrame, input_model:str = 'gpt-4o'):
         "questions": variants
     }
     save_to_mongo(final_json, "questions")
+
+def save_locally(final_json):
+    # Build the base filename using the model and _duplicates flag.
+    # TODO: this isn't always known when sent to here to save locally
+    duplicates_suffix = '_duplicates' if final_json.get('is_duplicates') else ''
+    base_name = f"{final_json['model']}{duplicates_suffix}"
+    directory = './data/failed'
+    
+    # Create directory if it doesn't exist
+    os.makedirs(directory, exist_ok=True)
+    
+    # Set initial file path
+    file_path = os.path.join(directory, f"{base_name}.json")
+    
+    # If the file exists, append a counter until a free filename is found.
+    counter = 1
+    while os.path.exists(file_path):
+        file_path = os.path.join(directory, f"{base_name}_{counter}.json")
+        counter += 1
+
+    with open(file_path, 'w') as f:
+        f.write(final_json)
+    print(f"Saved failed file locally at {file_path}")
 
 def save_to_mongo(final_json, collection):
     uri = os.getenv("MONGODB_URI")
@@ -81,13 +109,13 @@ def read_mongo(is_duplicates):
         print(e)
 
 # TODO: break down this function cause it is unclear what it is doing now   
-def generate_response(data:dict, output_model:str):
+def generate_response(client: OpenAI, data:dict, output_model:str):
     dataset = {}
     id = 1 #ID for questions
     flag = False
 
-    for dict in data['questions']:
-        cleaned_questions_block = re.sub(r'q_\d+:\s*', '', dict['response'])
+    for question_group in data['questions']:
+        cleaned_questions_block = re.sub(r'q_\d+:\s*', '', question_group.get('response'))
 
         # Split the cleaned string into separate questions
         question_list = cleaned_questions_block.split("\n")
@@ -136,35 +164,97 @@ def generate_response(data:dict, output_model:str):
     collection = "output"
     save_to_mongo(final_json, collection)
     return flag
-    
 
-# TODO: make this main function or some
-api_key = os.getenv("OPENAI_API_KEY")
-models = ["qwen2.5:0.5b", "qwen2.5:1.5b", "qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b", "gpt-4o"]
-input_model = 'gpt-4o'
-is_duplicates = False
+def process_question_group_sync(question_group:dict, question_id: int, output_model:str):
+    api_key = os.getenv("OPENAI_API_KEY")
+    client = OpenAI(api_key=api_key)
 
-# LOAD DATA
-df = pd.read_json("hf://datasets/databricks/databricks-dolly-15k/databricks-dolly-15k.jsonl", lines=True)
-filtered_df = df[df['category'] == 'open_qa']
-df_open_qa = filtered_df.head(10)
+    cleaned_questions_block = re.sub(r'q_\d+:\s*', '', question_group['response'])
+    # Split the cleaned string into separate questions
+    question_list = cleaned_questions_block.split("\n")
+    # This will allow me to group the different type of questions with their variants
+    question_grouped = []
 
-# CREATING QUESTIONS
-# create_variants(df=df_open_qa, n=10)
-# create_duplicates(df=df_open_qa, n=10)
+    for question in question_list:
+        # Sometimes generation fails to have two `\n\n` so we have empty strings
+        if question == '':
+            continue
 
-# ANSWERING QUESTIONS
-data = read_mongo(is_duplicates)
-for model in models:
-    if model.startswith('gpt'):
-        client = OpenAI(api_key=api_key)
-    else:
-        client = OpenAI(
-            base_url = 'http://localhost:11434/v1',
-            api_key='ollama', # required, but unused
-        )
+        message = [{
+                "role": "user",
+                "content": question
+        }]
+        
+        try:
+            output = client.chat.completions.create(model=output_model, messages=message)
+        except Exception as e:
+            # Print the exception and optionally do additional processing.
+            print(f"Error in process {os.getpid()} for question {question_id}: {e}")
+            # If you want to persist partial results, you might call save_locally() here.
+            save_locally({f"question_{question_id}": question_grouped})
+        
+        question_grouped.append({
+            "user_input": question,
+            "response":output.choices[0].message.content,
+        })
 
-    early_stop_flag = generate_response(data=data, output_model=model)
-    if early_stop_flag:
-        print("Process stopped early, files have been saved in './data/failed'")
-        break
+    return question_grouped
+
+async def generate_response_parallel(data:dict, output_model:str):
+    # Create a ProcessPoolExecutor - you might tune the max_workers parameter as needed.
+    loop = asyncio.get_running_loop()
+    tasks = []
+    with ProcessPoolExecutor(max_workers=len(data['questions'])) as executor:
+        # Submit each question group to a worker process.
+        for i, question_group in enumerate(data['questions'], start=1):
+            worker = functools.partial(
+                process_question_group_sync,
+                question_group,
+                i,
+                output_model
+            )
+            tasks.append(loop.run_in_executor(executor, worker))
+        
+            
+        # Wait for all processes to finish.
+        results = await asyncio.gather(*tasks)
+    results_dict = {}
+    id = 1
+    for res in results:
+        results_dict[f'question_{id}'] = res
+        id += 1
+
+    final_json = {
+        "model": output_model,  
+        "is_duplicates": data['is_duplicates'],              
+        "answers": results_dict
+    }
+    collection = "output"
+    save_to_mongo(final_json, collection)
+
+if __name__ == '__main__':
+    models = ["gpt-4o"]
+    input_model = 'gpt-4o'
+    is_duplicates = False
+
+    # LOAD DATA
+    df = pd.read_json("hf://datasets/databricks/databricks-dolly-15k/databricks-dolly-15k.jsonl", lines=True)
+    filtered_df = df[df['category'] == 'open_qa']
+    df_open_qa = filtered_df.head(10)
+
+    # CREATING QUESTIONS
+    # create_variants(df=df_open_qa, n=10)
+    # create_duplicates(df=df_open_qa, n=10)
+
+    # ANSWERING QUESTIONS
+    data = read_mongo(is_duplicates)
+    for model in models:
+        if model.startswith('gpt'):
+            # Parallel api calls
+            asyncio.run(generate_response_parallel(data=data, output_model=model))
+        else:
+            client = OpenAI(
+                base_url = 'http://localhost:11434/v1',
+                api_key='ollama', # required, but unused
+            )
+            generate_response(client=client, data=data, output_model=model)
