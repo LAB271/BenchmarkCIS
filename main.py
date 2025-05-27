@@ -63,13 +63,16 @@ def save_locally(final_json):
         f.write(final_json)
     print(f"Saved failed file locally at {file_path}")
 
-def read_mongo(collection, is_duplicates, model):
+def read_mongo(collection, is_duplicates, model, temp=None):
     uri = os.getenv("MONGODB_URI")
     client = MongoClient(uri, server_api=ServerApi('1'))
     try:
         db = client["data"]
         collection = db[collection]
-        document = collection.find_one({"is_duplicates":is_duplicates, "model":model})
+        if temp is not None:
+            document = collection.find_one({"model":"gpt-4o", "is_duplicates":is_duplicates, "temperature":temp})
+        else:    
+            document = collection.find_one({"is_duplicates":is_duplicates, "model":model})
         return document
     except Exception as e:
         # TODO: Add error handling
@@ -132,7 +135,7 @@ def preprocess_text(texts):
         result.append(' '.join(lemmatized_tokens))
     return result[0], result[1]
 
-def process_question_group_sync(question_group, pre_processing, question_id):
+def process_question_group_sync(question_group, question_id):
     """
     The helper function that processes one question group.
 
@@ -142,7 +145,7 @@ def process_question_group_sync(question_group, pre_processing, question_id):
     """
     eval_embeddings = LangchainEmbeddingsWrapper(OpenAIEmbeddings(model='text-embedding-3-large', api_key=api_key))
     # First, generate permutations.
-    permutations = create_permutations(question_group, pre_processing)
+    permutations = create_permutations(question_group)
     temp = []
     sum_score = 0
     scorer = SemanticSimilarity(embeddings=eval_embeddings)
@@ -178,7 +181,7 @@ def process_question_group_sync(question_group, pre_processing, question_id):
 #
 # The main async function.
 #
-async def string_similarity_parallel(data, results_json, pre_processing):
+async def string_similarity_parallel(data, results_json):
     """
     Parallelizes processing on a per-question-group basis using a ProcessPoolExecutor.
     """
@@ -193,7 +196,6 @@ async def string_similarity_parallel(data, results_json, pre_processing):
             worker = functools.partial(
                 process_question_group_sync,
                 question_group,
-                pre_processing,
                 i,
             )
             tasks.append(loop.run_in_executor(executor, worker))
@@ -213,7 +215,7 @@ async def string_similarity_parallel(data, results_json, pre_processing):
     print(f"Final Average metric for the Model: {avg_model_score}")
     return avg_model_score
 
-async def string_similarity(data, scorer, results_json, pre_processing):
+async def string_similarity(data, scorer, results_json):
     """
     Synchronous processing of multiple question-groups.
     """
@@ -223,7 +225,7 @@ async def string_similarity(data, scorer, results_json, pre_processing):
 
     # Creates permutations (n choose 2) to compare string similarity between all style of outputs.  
     for question_group in data:
-        permutations = create_permutations(question_group, pre_processing)
+        permutations = create_permutations(question_group)
         temp = []
 
         sum_score = 0    
@@ -250,14 +252,12 @@ async def string_similarity(data, scorer, results_json, pre_processing):
     print(f"{Style.RESET_ALL} The final Average {results_json["metric"]} for the Model: {avg_model_score}")
     return avg_model_score
 
-def create_permutations(question_group, pre_processing):
+def create_permutations(question_group):
     permutations = []
     for i in range(0, len(question_group) - 1):
         permutation = []
         for j in range(i+1, len(question_group)):
             response_processed, reference_processed = question_group[j]['response'], question_group[i]['response']
-            if pre_processing:
-                response_processed, reference_processed = preprocess_text(texts = [question_group[j]['response'], question_group[i]['response']])
             permutation.append(
                     SingleTurnSample(
                         response = response_processed,
@@ -268,65 +268,46 @@ def create_permutations(question_group, pre_processing):
     return permutations
 
 if __name__ == "__main__":
-    models = ["qwen2.5:0.5b", "qwen2.5:1.5b", "qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b", "gpt-4o"]
+    models = ["gpt-4o"]
     combinations = [(False, False), (False, True), (True, False), (True, True)]
     # Determine if you're looking at duplicate questions or different variants
-    is_duplicates = True
-    duplicates_path = 'duplicates' if is_duplicates else 'variants'
+    is_duplicates = False
+    temp = 2.0
+    result = []
 
-    for transpose, pre_processing in combinations:
-        result = []
-
-        if pre_processing:
-            nltk.download('stopwords')
-            nltk.download('wordnet')
-            nltk.download('omw-1.4')
-            nltk.download('averaged_perceptron_tagger_eng')
-
-        for model in models:
-            # Convert to correct format
-            data = read_mongo("output", is_duplicates, model)
-            json_data = convert_answers(data['answers'])
-
-            # Assumes square matrix
-            transposed_data = []
-            if transpose:
-                rows = len(json_data)
-                cols = len(json_data[0])
-                transposed_data = [[json_data[j][i] for j in range(rows)] for i in range(cols)]
-                json_data = transposed_data
+    for model in models:
+        # Convert to correct format
+        data = read_mongo("output", is_duplicates, model, temp=temp)
+        json_data = convert_answers(data['answers'])
             
-             
-            score_dict = {
-                "Non-LLM String Similarity": NonLLMStringSimilarity(distance_measure=DistanceMeasure.LEVENSHTEIN),
-                "BlueScore": BleuScore(),
-                "Rouge Score": RougeScore(rouge_type='rougeL'),
-                "LLM Semantic Similarity": None
+        score_dict = {
+            "Non-LLM String Similarity": NonLLMStringSimilarity(distance_measure=DistanceMeasure.LEVENSHTEIN),
+            "BlueScore": BleuScore(),
+            "Rouge Score": RougeScore(rouge_type='rougeL'),
+            "LLM Semantic Similarity": None
+        }
+        
+        print(f"Now checking string and semantic similarity of {Fore.RED} {model}:")
+        for metric in score_dict.keys():
+            base_dict = {
+                "metric": metric,
+                "model": model,
+                "temperature":temp,
+                "is_duplicates": is_duplicates,
             }
-            
-            print(f"Now checking string and semantic similarity of {Fore.RED} {model}:")
-            for metric in score_dict.keys():
-                base_dict = {
-                    "metric": metric,
-                    "model": model,
-                    "is_duplicates": is_duplicates,
-                    "is_preprocessed": pre_processing,
-                    "is_transposed": transpose,
-                }
 
-                # If the metric requires API calls then do parallel
-                if metric == "LLM Semantic Similarity":
-                    avg_score = asyncio.run(string_similarity_parallel(json_data, base_dict, pre_processing))
-                else:
-                    avg_score = asyncio.run(string_similarity(json_data, score_dict[metric], base_dict, pre_processing))
+            # If the metric requires API calls then do parallel
+            if metric == "LLM Semantic Similarity":
+                avg_score = asyncio.run(string_similarity_parallel(json_data, base_dict))
+            else:
+                avg_score = asyncio.run(string_similarity(json_data, score_dict[metric], base_dict))
 
-                result.append({'model':model, 'avg_score': avg_score, 'metric':metric})
-            print()
+            result.append({'model':model, 'avg_score': avg_score, 'metric':metric})
+        print()
         
         final_json = {
             "is_duplicates": is_duplicates,
-            "is_preprocessed": pre_processing,
-            "is_transposed": transpose,
+            "temperature": temp,
             "result": result
         }
 

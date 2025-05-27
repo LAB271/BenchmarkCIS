@@ -10,6 +10,9 @@ import asyncio
 from dotenv import load_dotenv
 load_dotenv()
 import os
+import time
+# To measure the amount of calls
+import agentops
 
 # TODO: Make the temperature change thing (maybe also top_k)
 # TODO: Add documentation
@@ -111,7 +114,7 @@ def read_mongo(is_duplicates):
         print(e)
 
 # TODO: break down this function cause it is unclear what it is doing now   
-def generate_response(client: OpenAI, data:dict, output_model:str):
+def generate_response(client: OpenAI, data:dict, output_model:str, temperature:float):
     dataset = {}
     id = 1 #ID for questions
     flag = False
@@ -161,13 +164,13 @@ def generate_response(client: OpenAI, data:dict, output_model:str):
     final_json = {
         "model": output_model,  
         "is_duplicates": data['is_duplicates'],              
+        "temperature": temperature,
         "answers": dataset
     }
-    collection = "output"
-    save_to_mongo(final_json, collection)
-    return flag
+    
+    return final_json
 
-def process_question_group_sync(question_group:dict, question_id: int, output_model:str):
+def process_question_group_sync(question_group:dict, question_id: int, output_model:str, temperature:float):
     api_key = os.getenv("OPENAI_API_KEY")
     client = OpenAI(api_key=api_key)
 
@@ -188,8 +191,11 @@ def process_question_group_sync(question_group:dict, question_id: int, output_mo
         }]
         
         try:
-            output = client.chat.completions.create(model=output_model, messages=message)
+            # Output tokens here are limited because higher temps generate expensive output
+            # Based on output tokens from smaller temps
+            output = client.chat.completions.create(model=output_model, messages=message, temperature=temperature, max_completion_tokens=167)
         except Exception as e:
+            # TODO: fix cause this didn't save anything locally
             # Print the exception and optionally do additional processing.
             print(f"Error in process {os.getpid()} for question {question_id}: {e}")
             # If you want to persist partial results, you might call save_locally() here.
@@ -202,7 +208,8 @@ def process_question_group_sync(question_group:dict, question_id: int, output_mo
 
     return question_grouped
 
-async def generate_response_parallel(data:dict, output_model:str):
+
+async def generate_response_parallel(data:dict, output_model:str, temperature:int):
     # Create a ProcessPoolExecutor - you might tune the max_workers parameter as needed.
     loop = asyncio.get_running_loop()
     tasks = []
@@ -213,8 +220,10 @@ async def generate_response_parallel(data:dict, output_model:str):
                 process_question_group_sync,
                 question_group,
                 i,
-                output_model
+                output_model,
+                temperature
             )
+            
             tasks.append(loop.run_in_executor(executor, worker))
         
             
@@ -228,21 +237,22 @@ async def generate_response_parallel(data:dict, output_model:str):
 
     final_json = {
         "model": output_model,  
-        "is_duplicates": data['is_duplicates'],              
+        "is_duplicates": data['is_duplicates'], 
+        "temperature": temperature,             
         "answers": results_dict
     }
-    collection = "output"
-    save_to_mongo(final_json, collection)
+    return final_json
 
 if __name__ == '__main__':
     models = ["gpt-4o"]
     input_model = 'gpt-4o'
-    is_duplicates = False
-
+    is_duplicates = True
+    # Determines the step case for temperature
+    step = 0.5
     # LOAD DATA
-    df = pd.read_json("hf://datasets/databricks/databricks-dolly-15k/databricks-dolly-15k.jsonl", lines=True)
-    filtered_df = df[df['category'] == 'open_qa']
-    df_open_qa = filtered_df.head(10)
+    # df = pd.read_json("hf://datasets/databricks/databricks-dolly-15k/databricks-dolly-15k.jsonl", lines=True)
+    # filtered_df = df[df['category'] == 'open_qa']
+    # df_open_qa = filtered_df.head(10)
 
     # CREATING QUESTIONS
     # create_variants(df=df_open_qa, n=10)
@@ -251,12 +261,22 @@ if __name__ == '__main__':
     # ANSWERING QUESTIONS
     data = read_mongo(is_duplicates)
     for model in models:
-        if model.startswith('gpt'):
-            # Parallel api calls
-            asyncio.run(generate_response_parallel(data=data, output_model=model))
-        else:
-            client = OpenAI(
-                base_url = 'http://localhost:11434/v1',
-                api_key='ollama', # required, but unused
-            )
-            generate_response(client=client, data=data, output_model=model)
+        temp = 0
+        while temp <= 1.0:
+            print("Starting progress:")
+            if model.startswith('gpt'):
+                # agentops.init(api_key=os.getenv("AGENTOPS_API_KEY"))
+                # Parallel api calls
+                final_json = asyncio.run(generate_response_parallel(data=data, output_model=model, temperature=temp))
+            else:
+                client = OpenAI(
+                    base_url = 'http://localhost:11434/v1',
+                    api_key='ollama', # required, but unused
+                )
+                final_json = generate_response(client=client, data=data, output_model=model, temperature=temp)
+            
+            collection = "output"
+            save_to_mongo(final_json, collection)
+            temp += step
+            # Lazy API limiter
+            # time.sleep(60)
