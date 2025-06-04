@@ -95,6 +95,6 @@ generator = TestsetGenerator(
 )
 
 testset = generator.generate(testset_size=10, query_distribution=query_distibution)
-testset.to_pandas()
-# testset.head()
+# rename column to match dataset_creation column
+testset.to_pandas().rename(columns={'user_input': 'instruction'}, inplace=True)
 testset.to_jsonl('./data/cis_wiki.jsonl')
