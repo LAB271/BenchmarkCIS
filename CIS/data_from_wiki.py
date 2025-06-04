@@ -97,4 +97,4 @@ generator = TestsetGenerator(
 testset = generator.generate(testset_size=10, query_distribution=query_distibution)
 testset.to_pandas()
 # testset.head()
-testset.to_jsonl('./data/experiment.jsonl')
+testset.to_jsonl('./data/cis_wiki.jsonl')
