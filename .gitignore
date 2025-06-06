@@ -2,5 +2,15 @@
 experiment.ipynb
 data/output/experiment_data.json
 data/results/experiment.txt
+data/experiment_conversion.json
+data/experiment_kg.json
+data/experiment.json
+data/ragas_kg.json
+data/records.json
+java_test.zip
+python_test.zip
+CIS/CIS.py
+CIS/ConversionKG.py
+CIS/data_creation.py
 distribution.txt
 ollama_modelfiles
