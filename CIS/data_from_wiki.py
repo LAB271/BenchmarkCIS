@@ -17,16 +17,46 @@ from ragas.testset.synthesizers.single_hop.specific import (
     SingleHopSpecificQuerySynthesizer,
 )
 from ragas.testset import TestsetGenerator
+import requests
 '''
 This file relies on the generated wiki from CIS to create datasets. The context is then taken from the wiki, which may not be ideal when checking for correctness.
 '''
 
+# Generate wiki first
+# This will take some time
+def post_wiki_generations(base_url):
+    url = base_url + '/wiki/generate'
+    try:
+        headers = {
+            "access_token":"abc123",
+            "Content-Type": "application/json"
+        }
+
+        data = {
+            "project_name":"CountYourWords",
+            "use_case_description": "Test"
+        }
+        response = requests.post(url, data=data, headers=headers)
+
+        # Check if the request was successful (status code 200)
+        if response.status_code == 202:
+            posts = response.json()
+            print(posts)
+        else:
+            print('Error:', response.status_code)
+    except requests.exceptions.RequestException as e:
+    
+        # Handle any network-related errors or exceptions
+        print('Error:', e)
+
+base_url = 'http://localhost:8081'
+# post_wiki_generations(base_url)
 
 load_dotenv(override=True)
 api_key = os.getenv("OPENAI_API_KEY")
 
 # Initialize the Generator LLM
-generator_llm = LangchainLLMWrapper(ChatOpenAI(model="gpt-4o-mini", api_key=api_key))
+generator_llm = LangchainLLMWrapper(ChatOpenAI(model="gpt-4o", api_key=api_key))
 # Set Embedding model
 eval_embeddings = LangchainEmbeddingsWrapper(OpenAIEmbeddings(api_key=api_key))
 # Initialize KG
@@ -64,15 +94,15 @@ persona_new_joinee = Persona(
     role_description="Does not know much about the project and is looking for information on how to get started.",
 )
 persona_engineer = Persona(
-    name="Experienced Engineer",
-    role_description="Wants to know about how to refactor or improve the project.",
+    name="Experienced Software Engineer",
+    role_description="You are a senior engineer who values following strict Software principles",
 )
 persona_project_lead = Persona(
     name="Project Leader",
     role_description="Wants to know how relevant it is for real world use cases.",
 )
 
-personas = [persona_new_joinee, persona_engineer, persona_project_lead]
+personas = [persona_engineer]
 
 query_distibution = [
     (
@@ -94,7 +124,8 @@ generator = TestsetGenerator(
     persona_list=personas,
 )
 
-testset = generator.generate(testset_size=10, query_distribution=query_distibution)
+testset = generator.generate(testset_size=25, query_distribution=query_distibution)
 # rename column to match dataset_creation column
+# TODO: fix the rename it doesn't work
 testset.to_pandas().rename(columns={'user_input': 'instruction'}, inplace=True)
 testset.to_jsonl('./data/cis_wiki.jsonl')
