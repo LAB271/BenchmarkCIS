@@ -7,6 +7,7 @@ from pymongo.server_api import ServerApi
 from dotenv import load_dotenv
 load_dotenv()
 import os
+import requests
 
 # TODO: Make the temperature change thing (maybe also top_k)
 
@@ -21,6 +22,8 @@ def create_duplicates(df: pd.DataFrame, n:int):
     
     final_json = {
         "is_duplicates": True,
+        # TODO: make this so that it can be added in the call
+        "is_cis":True,
         "questions": duplicates
     }
     save_to_mongo(final_json, "questions")
@@ -47,6 +50,8 @@ def create_variants(n:int, df: pd.DataFrame, input_model:str = 'gpt-4o'):
     
     final_json = {
         "is_duplicates": False,
+        # TODO: make this so that it can be added in the call
+        "is_cis":True,
         "questions": variants
     }
     save_to_mongo(final_json, "questions")
@@ -68,13 +73,14 @@ def save_to_mongo(final_json, collection):
         with open(f'./data/failed/{final_json['model']}{path_dup}.json', 'w') as f:
             json.dump(final_json, f, indent=2)
 
-def read_mongo(is_duplicates):
+def read_mongo(is_duplicates, is_cis):
     uri = os.getenv("MONGODB_URI")
     client = MongoClient(uri, server_api=ServerApi('1'))
     try:
         db = client["data"]
         collection = db["questions"]
-        document = collection.find_one({"is_duplicates":is_duplicates})
+        document = collection.find_one({"is_duplicates":is_duplicates, "is_cis":is_cis})
+        print("Found Document")
         return document
     except Exception as e:
         print(e)
@@ -94,7 +100,7 @@ def generate_response(data:dict, output_model:str):
         flag = False
         for question in question_list:
             # Sometimes generation fails to have two `\n\n` so we have empty strings
-            if question == '':
+            if question == '' or question == '---':
                 continue
 
             message = [{
@@ -102,16 +108,38 @@ def generate_response(data:dict, output_model:str):
                     "content": question
                 }]
             try:
-                output = client.chat.completions.create(model=output_model, messages=message)
+                # TODO: implement difference
+                headers = {
+                    "access_token": "abc123",
+                    "Content-Type": "application/json"
+                }
+
+                message = {
+                    "messages": message,
+                    "model": "chat_model",
+                    "stream": False
+                    }
+
+                
+                response = requests.post('http://localhost:8081/v1/chat/completions', headers=headers, json=message)
+
+                # Check if the request was successful (status code 200)
+                if response.status_code == 200:
+                    output = response.json()
+                    print(output['choices'][0]['message']['content'])
             except Exception as e:
                 print(e)
                 flag = True
                 print(f"Final question group handled: {id}")
                 break
             
+            text = output['choices'][0]['message']['content']
+            clean_text = text.replace('---\n', '')
+            context = output['context']
             question_grouped.append({
                 "user_input": question,
-                "response":output.choices[0].message.content,
+                "response": clean_text,
+                "context": context
             })
         dataset[f'question_{id}'] = question_grouped
         id += 1
@@ -140,29 +168,41 @@ def generate_response(data:dict, output_model:str):
 api_key = os.getenv("OPENAI_API_KEY")
 models = ["qwen2.5:0.5b", "qwen2.5:1.5b", "qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b", "gpt-4o"]
 input_model = 'gpt-4o'
-is_duplicates = False
+bool_dups = [False, True]
+is_cis = True
 
 # LOAD DATA
-df = pd.read_json("hf://datasets/databricks/databricks-dolly-15k/databricks-dolly-15k.jsonl", lines=True)
-filtered_df = df[df['category'] == 'open_qa']
-df_open_qa = filtered_df.head(10)
+# Baseline LLMs
+# df = pd.read_json("hf://datasets/databricks/databricks-dolly-15k/databricks-dolly-15k.jsonl", lines=True)
+# filtered_df = df[df['category'] == 'open_qa']
+# CIS Wiki
+# df_open_qa = pd.read_json("./data/cis_wiki.jsonl", lines=True)
+# CIS Normal Prompt
+# df_open_qa = pd.read_json('./data/cis_normal_prompt.json', orient='records', lines=False)
 
 # CREATING QUESTIONS
 # create_variants(df=df_open_qa, n=10)
 # create_duplicates(df=df_open_qa, n=10)
 
 # ANSWERING QUESTIONS
-data = read_mongo(is_duplicates)
-for model in models:
-    if model.startswith('gpt'):
-        client = OpenAI(api_key=api_key)
-    else:
-        client = OpenAI(
-            base_url = 'http://localhost:11434/v1',
-            api_key='ollama', # required, but unused
-        )
+for is_duplicates in bool_dups:
+    data = read_mongo(is_duplicates, is_cis)
+    if is_cis:
 
-    early_stop_flag = generate_response(data=data, output_model=model)
-    if early_stop_flag:
-        print("Process stopped early, files have been saved in './data/failed'")
-        break
+        early_stop_flag = generate_response(data=data, output_model='cis')
+        if early_stop_flag:
+            print("Process stopped early, files have been saved in './data/failed'")
+    else:
+        for model in models:
+            if model.startswith('gpt'):
+                client = OpenAI(api_key=api_key)
+            else:
+                client = OpenAI(
+                    base_url = 'http://localhost:11434/v1',
+                    api_key='ollama', # required, but unused
+                )
+
+            early_stop_flag = generate_response(data=data, output_model=model)
+            if early_stop_flag:
+                print("Process stopped early, files have been saved in './data/failed'")
+                break
