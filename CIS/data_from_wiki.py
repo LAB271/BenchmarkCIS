@@ -56,7 +56,7 @@ load_dotenv(override=True)
 api_key = os.getenv("OPENAI_API_KEY")
 
 # Initialize the Generator LLM
-generator_llm = LangchainLLMWrapper(ChatOpenAI(model="gpt-4o", api_key=api_key))
+generator_llm = LangchainLLMWrapper(ChatOpenAI(model="gpt-4o-mini", api_key=api_key))
 # Set Embedding model
 eval_embeddings = LangchainEmbeddingsWrapper(OpenAIEmbeddings(api_key=api_key))
 # Initialize KG
@@ -127,5 +127,6 @@ generator = TestsetGenerator(
 testset = generator.generate(testset_size=25, query_distribution=query_distibution)
 # rename column to match dataset_creation column
 # TODO: fix the rename it doesn't work
-testset.to_pandas().rename(columns={'user_input': 'instruction'}, inplace=True)
-testset.to_jsonl('./data/cis_wiki.jsonl')
+df = testset.to_pandas()
+df.rename(columns={'user_input': 'instruction'}, inplace=True)
+df.to_json('./data/cis_wiki.json', orient='records', force_ascii=False, indent=2)
