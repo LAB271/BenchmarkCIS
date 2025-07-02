@@ -1,5 +1,5 @@
 from ragas import SingleTurnSample
-from ragas.metrics import NonLLMStringSimilarity, SemanticSimilarity, BleuScore, RougeScore, DistanceMeasure
+from ragas.metrics import NonLLMStringSimilarity, SemanticSimilarity, BleuScore, RougeScore, DistanceMeasure, ExactMatch
 from ragas import evaluate
 from ragas.embeddings import LangchainEmbeddingsWrapper, LlamaIndexEmbeddingsWrapper
 from langchain_openai import OpenAIEmbeddings
@@ -212,10 +212,10 @@ async def string_similarity_parallel(data, results_json):
     avg_model_score = sum_average_question_group / len(data) if data else 0
 
     # Adjust the print message to avoid shadowing quotes.
-    print(f"Final Average metric for the Model: {avg_model_score}")
+    print(f"Final Average Embedding Similarity: {avg_model_score}")
     return avg_model_score
 
-async def string_similarity(data, scorer, results_json):
+async def string_similarity(data, scorer, results_json, column_to_compare='response'):
     """
     Synchronous processing of multiple question-groups.
     """
@@ -225,7 +225,7 @@ async def string_similarity(data, scorer, results_json):
 
     # Creates permutations (n choose 2) to compare string similarity between all style of outputs.  
     for question_group in data:
-        permutations = create_permutations(question_group)
+        permutations = create_permutations(question_group, column_to_compare)
         temp = []
 
         sum_score = 0    
@@ -249,15 +249,15 @@ async def string_similarity(data, scorer, results_json):
         
     save_to_mongo(results_json, "partial_results")
     avg_model_score = (sum_average_question_group / len(data))
-    print(f"{Style.RESET_ALL} The final Average {results_json["metric"]} for the Model: {avg_model_score}")
+    print(f"{Style.RESET_ALL} The final Average {results_json["metric"]}: {avg_model_score}")
     return avg_model_score
 
-def create_permutations(question_group):
+def create_permutations(question_group, column_to_compare='response'):
     permutations = []
     for i in range(0, len(question_group) - 1):
         permutation = []
         for j in range(i+1, len(question_group)):
-            response_processed, reference_processed = question_group[j]['response'], question_group[i]['response']
+            response_processed, reference_processed = question_group[j][column_to_compare], question_group[i][column_to_compare]
             permutation.append(
                     SingleTurnSample(
                         response = response_processed,
@@ -268,23 +268,24 @@ def create_permutations(question_group):
     return permutations
 
 if __name__ == "__main__":
-    models = ["gpt-4o"]
+    models = ["cis"]
     combinations = [(False, False), (False, True), (True, False), (True, True)]
     # Determine if you're looking at duplicate questions or different variants
-    is_duplicates = False
-    temp = 2.0
+    is_duplicates = True
     result = []
+    is_context = True 
 
     for model in models:
         # Convert to correct format
-        data = read_mongo("output", is_duplicates, model, temp=temp)
+        data = read_mongo("output", is_duplicates, model)
         json_data = convert_answers(data['answers'])
             
         score_dict = {
-            "Non-LLM String Similarity": NonLLMStringSimilarity(distance_measure=DistanceMeasure.LEVENSHTEIN),
-            "BlueScore": BleuScore(),
-            "Rouge Score": RougeScore(rouge_type='rougeL'),
-            "LLM Semantic Similarity": None
+            # "Non-LLM String Similarity": NonLLMStringSimilarity(distance_measure=DistanceMeasure.LEVENSHTEIN),
+            # "BlueScore": BleuScore(),
+            # "Rouge Score": RougeScore(rouge_type='rougeL'),
+            # "LLM Semantic Similarity": None,
+            "ExactMatch":ExactMatch(),
         }
         
         print(f"Now checking string and semantic similarity of {Fore.RED} {model}:")
@@ -292,7 +293,8 @@ if __name__ == "__main__":
             base_dict = {
                 "metric": metric,
                 "model": model,
-                "temperature":temp,
+                "is_context":is_context,
+                # "temperature":temp,
                 "is_duplicates": is_duplicates,
             }
 
@@ -300,14 +302,15 @@ if __name__ == "__main__":
             if metric == "LLM Semantic Similarity":
                 avg_score = asyncio.run(string_similarity_parallel(json_data, base_dict))
             else:
-                avg_score = asyncio.run(string_similarity(json_data, score_dict[metric], base_dict))
+                avg_score = asyncio.run(string_similarity(json_data, score_dict[metric], base_dict, column_to_compare='context'))
 
             result.append({'model':model, 'avg_score': avg_score, 'metric':metric})
         print()
         
         final_json = {
             "is_duplicates": is_duplicates,
-            "temperature": temp,
+            "is_cis": True,
+            "is_context": is_context,
             "result": result
         }
 

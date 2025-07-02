@@ -90,19 +90,19 @@ kg.save("./data/wiki_kg.json")
 print(kg)
 # Create Personas
 persona_new_joinee = Persona(
-    name="New Joinee",
-    role_description="Does not know much about the project and is looking for information on how to get started.",
+    name="Experienced Security Software Engineer",
+    role_description="You are a senior engineer who values following strict Software principles, specifically worried about the topic: security",
 )
 persona_engineer = Persona(
-    name="Experienced Software Engineer",
-    role_description="You are a senior engineer who values following strict Software principles",
+    name="Experienced Explanation Software Engineer",
+    role_description="You are a senior engineer who values following strict Software principles, specifically worried about the topic: explanation",
 )
 persona_project_lead = Persona(
-    name="Project Leader",
-    role_description="Wants to know how relevant it is for real world use cases.",
+    name="Experienced Improvement Software Engineer",
+    role_description="You are a senior engineer who values following strict Software principles, specifically worried about the topic: improvement points",
 )
 
-personas = [persona_engineer]
+personas = [persona_engineer, persona_new_joinee, persona_project_lead]
 
 query_distibution = [
     (
@@ -129,4 +129,4 @@ testset = generator.generate(testset_size=25, query_distribution=query_distibuti
 # TODO: fix the rename it doesn't work
 df = testset.to_pandas()
 df.rename(columns={'user_input': 'instruction'}, inplace=True)
-df.to_json('./data/cis_wiki.json', orient='records', force_ascii=False, indent=2)
+df.to_json('./data/experiment_cis_wiki.json', orient='records', force_ascii=False, indent=2)
