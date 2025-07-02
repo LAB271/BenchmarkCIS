@@ -12,5 +12,7 @@ python_test.zip
 CIS/CIS.py
 CIS/ConversionKG.py
 CIS/data_creation.py
+CIS/context.py
 distribution.txt
 ollama_modelfiles
+saving_avg.py
